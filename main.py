@@ -300,10 +300,16 @@ def wifi_up(ssid, psk, hostname):
 
 
 def main():
-    global np, loop
+    global np, loop, brightness, temperature, coeff
 
     with open('config.json', 'r') as f:
         conf = json.load(f)
+
+    brightness = conf.get('brightness', 0)
+    temperature = conf.get('temperature', 6500)
+    coeff.r = conf.get('coeff_r', 1.0)
+    coeff.g = conf.get('coeff_g', 1.0)
+    coeff.b = conf.get('coeff_b', 1.0)
 
     np = neopixel.NeoPixel(machine.Pin(conf.get('pin', 12)), conf['n_leds'])
     apply()

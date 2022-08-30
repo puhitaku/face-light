@@ -2,6 +2,13 @@
   "ssid": "YOUR_SSID",
   "psk": "YOUR_AP_PASSWORD",
   "hostname": "face-light",
+
   "n_leds": 10,
-  "pin": 12
+  "pin": 12,
+
+  "brightness": 0,
+  "temperature": 6500,
+  "coeff_r": 1.0,
+  "coeff_g": 1.0,
+  "coeff_b": 1.0
 }
