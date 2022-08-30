@@ -24,6 +24,11 @@ Fill the configuration file `config.json`.
  - `hostname`: ESP32's host name (advertised by mDNS)
  - `n_leds`: number of LEDs the strip has
  - `pin`: the pin number that the LED strip's DIN is connected to
+ - `brightness`: default brightness on boot
+ - `temperature`: default color temperature on boot
+ - `coeff_r`: default coefficient of R channel on boot
+ - `coeff_g`: default coefficient of G channel on boot
+ - `coeff_b`: default coefficient of B channel on boot
 
 After installing [ampy](https://github.com/scientifichackers/ampy), deploy the code and configuration.
 
