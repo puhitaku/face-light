@@ -10,9 +10,9 @@ from collections import OrderedDict
 
 from nanoweb import Nanoweb
 
+loop = uasyncio.get_event_loop()
 wifi = network.WLAN(network.STA_IF)
-n = 22 * 2
-np = neopixel.NeoPixel(machine.Pin(12), n)
+np = None
 
 temperature = 4000
 brightness = 255
@@ -124,7 +124,7 @@ def get_state():
 
 
 def apply():
-    global temperature, brightness, coeff
+    global np, temperature, brightness, coeff
 
     t = kelvin2rgb[temperature]
     r = brightness / 255
@@ -300,8 +300,12 @@ def wifi_up(ssid, psk, hostname):
 
 
 def main():
+    global np, loop
+
     with open('config.json', 'r') as f:
         conf = json.load(f)
+
+    np = neopixel.NeoPixel(machine.Pin(conf.get('pin', 12)), conf['n_leds'])
 
     while True:
         ok = wifi_up(conf['ssid'], conf['psk'], conf['hostname'])
@@ -312,7 +316,6 @@ def main():
         log('Address: {}, Netmask: {}, GW: {}, DNS: {}', *wifi.ifconfig())
         gc.collect()
 
-        loop = uasyncio.get_event_loop()
         loop.create_task(app.run())
 
         try:

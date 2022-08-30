@@ -1,5 +1,7 @@
 {
   "ssid": "YOUR_SSID",
   "psk": "YOUR_AP_PASSWORD",
-  "hostname": "face-light"
+  "hostname": "face-light",
+  "n_leds": 10,
+  "pin": 12
 }
