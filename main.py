@@ -1,9 +1,30 @@
+import gc
+import json
 import machine
+import network
 import neopixel
 import time
+import uasyncio
+
 from collections import OrderedDict
 
-n = 22
+from nanoweb import Nanoweb
+
+wifi = network.WLAN(network.STA_IF)
+n = 22 * 2
+np = neopixel.NeoPixel(machine.Pin(12), n)
+
+temperature = 4000
+brightness = 255
+
+
+class Coefficients:
+    r = 1.0
+    g = 1.0
+    b = 1.0
+
+
+coeff = Coefficients()
 
 # Table from https://andi-siess.de/rgb-to-color-temperature/
 kelvin2rgb_items = [
@@ -91,16 +112,213 @@ kelvin2rgb_items = [
 ]
 
 kelvin2rgb = OrderedDict(kelvin2rgb_items)
+app = Nanoweb(port=80)
+
+
+def log(fmt, *o):
+    print('[{:08.3f}]'.format(time.ticks_ms() / 1000), fmt.format(*o))
+
+
+def get_state():
+    return {'free': gc.mem_free()}
+
+
+def apply():
+    global temperature, brightness, coeff
+
+    t = kelvin2rgb[temperature]
+    r = brightness / 255
+    np.fill((int(t[0] * r * coeff.r), int(t[1] * r * coeff.g), int(t[2] * r * coeff.b)))
+    np.write()
+
+
+class Response:
+    error = None
+
+    def __init__(self, **kwargs):
+        self.error = None
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def jsonify(self) -> str:
+        d = dict()
+        items = ((k, v) for k, v in self.__dict__.items() if not k.startswith('__'))
+        for k, v in items:
+            d[k] = v
+        return json.dumps(d)
+
+
+def respond(methods=('GET',)):
+    """A mixin decorator to simplify handlers like Flask"""
+
+    def decorator(fn):
+        async def write_response(req, res):
+            if isinstance(res, tuple):
+                # Tuple = a tuple of status code and the body
+                status, body = res
+            else:
+                # Others = implies "200 OK"
+                status, body = 200, res
+
+                # Start writing the response header
+            await req.write('HTTP/1.1 {}\r\n'.format(status))
+
+            if isinstance(body, dict) or isinstance(body, list):
+                # Dict or list = jsonified
+                await req.write('Content-Type: application/json\r\n\r\n')
+                await req.write(json.dumps(body))
+            elif isinstance(body, Response):
+                await req.write('Content-Type: application/json\r\n\r\n')
+                await req.write(body.jsonify())
+            else:
+                # Others = implies a plain text and be transmitted as-is
+                await req.write('Content-Type: text/plain\r\n\r\n')
+                await req.write(body)
+
+        async def wrapper(req):
+            log('{} {}', req.method, req.url)
+            if req.method not in methods:
+                await req.read(-1)
+                await write_response(req, (405, Response(error='method not allowed')))
+                return
+
+            if req.method in ('PUT', 'POST', 'PATCH'):
+                typ = req.headers.get('Content-Type', '')
+                if typ != 'application/json':
+                    log('bad request, invalid content type')
+                    await req.read(-1)
+                    await write_response(req, (400, Response(error='bad request, invalid content type')))
+                    return
+
+                content_len = req.headers.get('Content-Length')
+                if content_len is None:
+                    log('bad request, content length is not specified or zero')
+                    await req.read(-1)
+                    await write_response(req, (400, Response(error='bad request, content length is not specified or zero')))
+                    return
+
+                body = await req.read(int(content_len))
+                req.body = body
+                req.json = json.loads(body)
+
+            await write_response(req, await fn(req))
+
+        return wrapper
+
+    return decorator
+
+
+@app.route('/healthz')
+@respond()
+async def healthz(req):
+    return 200, Response(message="I'm as ready as I'll ever be!", state=get_state())
+
+
+@app.route('/coefficients')
+@respond(methods=('GET', 'PUT'))
+async def coefficients(req):
+    global coeff
+
+    if req.method == 'GET':
+        return 200, Response(r=coeff.r, g=coeff.g, b=coeff.b)
+
+    r = req.json.get('r')
+    g = req.json.get('g')
+    b = req.json.get('b')
+
+    if r is None:
+        return 400, Response(error='bad request, request object has no r key')
+    elif g is None:
+        return 400, Response(error='bad request, request object has no g key')
+    elif b is None:
+        return 400, Response(error='bad request, request object has no b key')
+
+    if r > 1.0 or r < 0:
+        return 400, Response(error='bad request, invalid r')
+    elif g > 1.0 or g < 0:
+        return 400, Response(error='bad request, invalid g')
+    elif b > 1.0 or b < 0:
+        return 400, Response(error='bad request, invalid b')
+
+    log("r: {}, g: {}, b: {}", r, g, b)
+
+    coeff.r, coeff.g, coeff.b = r, g, b
+    apply()
+
+    return 200, Response(r=r, g=g, b=b)
+
+
+@app.route('/light')
+@respond(methods=('GET', 'PUT'))
+async def light(req):
+    global temperature, brightness
+
+    if req.method == 'GET':
+        return 200, Response(temperature=temperature, brightness=brightness)
+
+    t = req.json.get('temperature')
+    if t is None:
+        return 400, Response(error='bad request, request object has no temperature key')
+
+    b = req.json.get('brightness')
+    if b is None:
+        return 400, Response(error='bad request, request object has no brightness key')
+
+    if t < 2000 or t > 10000 or t % 100 != 0:
+        return 400, Response(error='bad request, invalid temperature')
+
+    if b < 0 or b > 255:
+        return 400, Response(error='bad request, invalid brightness')
+
+    temperature, brightness = t, b
+    apply()
+
+    return 200, Response(brightness=b, temperature=t)
+
+
+def wifi_up(ssid, psk, hostname):
+    if wifi.isconnected():
+        return True
+
+    log('Connecting to an AP')
+    log('SSID: {}, PSK: (hidden)', ssid)
+
+    wifi.active(True)
+    wifi.config(dhcp_hostname=hostname)
+    wifi.connect(ssid, psk)
+
+    for _ in range(10):
+        if wifi.isconnected():
+            break
+        time.sleep(1)
+    else:
+        log('Failed to connect: timed out')
+        return False
+
+    log('Successfully connected')
+    return True
 
 
 def main():
-    np = neopixel.NeoPixel(machine.Pin(4), n)
+    with open('config.json', 'r') as f:
+        conf = json.load(f)
 
     while True:
-        for t in kelvin2rgb.values():
-            np.fill(t)
-            np.write()
-            time.sleep(0.1)
+        ok = wifi_up(conf['ssid'], conf['psk'], conf['hostname'])
+        if not ok:
+            log('Failed to establish a Wi-Fi connection, resetting')
+            machine.reset()
+
+        log('Address: {}, Netmask: {}, GW: {}, DNS: {}', *wifi.ifconfig())
+        gc.collect()
+
+        loop = uasyncio.get_event_loop()
+        loop.create_task(app.run())
+
+        try:
+            loop.run_forever()
+        finally:
+            log("Interrupting the server")
 
 
 main()
