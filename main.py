@@ -14,8 +14,8 @@ loop = uasyncio.get_event_loop()
 wifi = network.WLAN(network.STA_IF)
 np = None
 
-temperature = 4000
-brightness = 255
+temperature = 6500
+brightness = 0
 
 
 class Coefficients:
@@ -306,6 +306,7 @@ def main():
         conf = json.load(f)
 
     np = neopixel.NeoPixel(machine.Pin(conf.get('pin', 12)), conf['n_leds'])
+    apply()
 
     while True:
         ok = wifi_up(conf['ssid'], conf['psk'], conf['hostname'])
