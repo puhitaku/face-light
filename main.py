@@ -13,6 +13,7 @@ from nanoweb import Nanoweb
 loop = uasyncio.get_event_loop()
 wifi = network.WLAN(network.STA_IF)
 np = None
+party = None
 
 temperature = 6500
 brightness = 0
@@ -274,6 +275,45 @@ async def light(req):
     apply()
 
     return 200, Response(brightness=b, temperature=t)
+
+
+@app.route('/party_mode')
+@respond(methods=('GET', 'PUT'))
+async def party_mode(req):
+    global loop, np, party
+
+    async def illuminate():
+        try:
+            while True:
+                np.fill((255, 0, 0))
+                np.write()
+                await uasyncio.sleep(0.2)
+                np.fill((0, 255, 0))
+                np.write()
+                await uasyncio.sleep(0.2)
+                np.fill((0, 0, 255))
+                np.write()
+                await uasyncio.sleep(0.2)
+        finally:
+            # Restore the normal color
+            apply()
+
+    if req.method == 'GET':
+        return 200, Response(enable=party is not None)
+
+    enable = req.json.get('enable')
+    if enable is None:
+        return 400, Response(error='bad request, request object has no enable key')
+
+    if enable:
+        if party is None:
+            party = loop.create_task(illuminate())
+    else:
+        if party is not None:
+            party.cancel()
+            party = None
+
+    return 200, Response(enable=enable)
 
 
 def wifi_up(ssid, psk, hostname):
